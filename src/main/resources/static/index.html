@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CanteenQ</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: #f4f1ea; color: #2b2b2b; }
+        header { background: #c0392b; color: #fff; padding: 14px 28px; display: flex; justify-content: space-between; align-items: center; }
+        header h1 { margin: 0; font-size: 24px; }
+        header a { color: #fff; margin-left: 18px; font-size: 14px; }
+        main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; padding: 18px 28px; }
+        .card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+        h2 { margin: 0 0 12px; font-size: 17px; color: #c0392b; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 7px 6px; border-bottom: 1px solid #eee; text-align: left; }
+        button { background: #c0392b; color: #fff; border: 0; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        button.light { background: #eee; color: #333; }
+        select, input { padding: 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; margin-bottom: 8px; }
+        .tag { font-size: 11px; padding: 2px 6px; border-radius: 3px; background: #eee; }
+        .VEG { background: #d4f5d4; } .NON_VEG { background: #f9d6d6; } .BEVERAGE { background: #d6e6f9; }
+        .SNACK { background: #fbecc8; } .DESSERT { background: #f3d9f5; }
+        .msg { margin-top: 8px; font-size: 14px; white-space: pre-line; }
+        .err { color: #b00020; } .ok { color: #1b7f3b; }
+        ul { padding-left: 18px; margin: 0; font-size: 14px; }
+        pre { background: #faf8f4; padding: 10px; font-size: 12px; max-height: 260px; overflow: auto; margin: 0; }
+        .wide { grid-column: span 2; }
+        .row { display: flex; gap: 8px; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>CanteenQ &mdash; skip the queue, not the meal</h1>
+    <nav><a href="/board" target="_blank">Token Board</a><a href="/h2" target="_blank">H2 Console</a></nav>
+</header>
+
+<main>
+    <section class="card">
+        <h2>Today's Menu</h2>
+        <table>
+            <thead><tr><th>Dish</th><th>Type</th><th>Price</th><th>Stock</th><th></th></tr></thead>
+            <tbody id="menu"></tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <h2>Your Order</h2>
+        <label>Member</label>
+        <select id="member"></select>
+        <label>Offer</label>
+        <select id="offer"></select>
+        <ul id="cart"><li>Cart is empty</li></ul>
+        <p><b>Subtotal: Rs <span id="subtotal">0</span></b></p>
+        <div class="row">
+            <button onclick="placeOrder()">Place Order</button>
+            <button class="light" onclick="clearCart()">Clear</button>
+        </div>
+        <div id="orderMsg" class="msg"></div>
+    </section>
+
+    <section class="card">
+        <h2>Kitchen Queue</h2>
+        <ul id="queue"></ul>
+        <p><button onclick="serveNext()">Serve next token</button></p>
+        <h2>Lunch Rush (threads)</h2>
+        <div class="row">
+            <input id="rushDish" value="Gulab Jamun">
+            <input id="rushPlates" type="number" value="3" min="1" style="width:90px">
+            <button onclick="rush()">Start</button>
+        </div>
+        <pre id="rushOut">Staff threads get MAX priority, students NORM priority.</pre>
+    </section>
+
+    <section class="card">
+        <h2>Notice Board</h2>
+        <ul id="notices"></ul>
+        <h2 style="margin-top:16px">Feedback</h2>
+        <input id="feedback" placeholder="Biryani was tasty but chai was cold!!">
+        <button onclick="sendFeedback()">Analyse</button>
+        <div id="fbMsg" class="msg"></div>
+    </section>
+
+    <section class="card wide">
+        <h2>Reports</h2>
+        <div class="row" style="margin-bottom:10px">
+            <button onclick="show('/api/reports/summary')">Summary</button>
+            <button onclick="show('/api/reports/fortnight')">Sales Matrix</button>
+            <button onclick="show('/api/archive/export', 'POST')">Export Bills</button>
+            <button onclick="showText('/api/archive/sheet')">Day Sheet</button>
+            <button onclick="show('/api/ledger/close', 'POST')">Close Today (JDBC)</button>
+            <button onclick="show('/api/ledger/closings')">Closings</button>
+        </div>
+        <pre id="report">Pick a report.</pre>
+    </section>
+</main>
+
+<script>
+    const cart = new Map();
+    let menu = [];
+
+    async function call(url, method = 'GET', body) {
+        const res = await fetch(url, {
+            method,
+            headers: body ? {'Content-Type': 'application/json'} : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await res.text();
+        const data = text ? (text.startsWith('{') || text.startsWith('[') ? JSON.parse(text) : text) : null;
+        if (!res.ok) throw new Error(data && data.message ? data.message : res.statusText);
+        return data;
+    }
+
+    async function loadMenu() {
+        menu = await call('/api/menu');
+        document.getElementById('menu').innerHTML = menu.map(d => `
+            <tr>
+                <td>${d.name}</td>
+                <td><span class="tag ${d.category}">${d.category}</span></td>
+                <td>Rs ${d.price}</td>
+                <td>${d.stock}</td>
+                <td><button ${d.available ? '' : 'disabled'} onclick="addToCart(${d.id})">Add</button></td>
+            </tr>`).join('');
+    }
+
+    async function loadMembers() {
+        const people = await call('/api/members');
+        const box = document.getElementById('member');
+        const picked = box.value;
+        box.innerHTML = people.map(p =>
+            `<option value="${p.id}">${p.name} (${p.role}) - Rs ${p.balance.toFixed(2)}</option>`).join('');
+        if (picked) box.value = picked;
+    }
+
+    async function loadOffers() {
+        const offers = await call('/api/offers');
+        document.getElementById('offer').innerHTML = Object.entries(offers)
+            .map(([code, label]) => `<option value="${code}" ${code === 'NONE' ? 'selected' : ''}>${code} - ${label}</option>`).join('');
+    }
+
+    async function loadQueue() {
+        const q = await call('/api/kitchen/queue');
+        document.getElementById('queue').innerHTML = q.length
+            ? q.map(r => `<li>Token #${r.token} - ${r.member}: ${r.items.join(', ')}</li>`).join('')
+            : '<li>Kitchen is free</li>';
+    }
+
+    async function loadNotices() {
+        const n = await call('/api/menu/notices');
+        document.getElementById('notices').innerHTML = n.length
+            ? n.map(x => `<li>${x}</li>`).join('') : '<li>No notices yet</li>';
+    }
+
+    function addToCart(id) {
+        cart.set(id, (cart.get(id) || 0) + 1);
+        renderCart();
+    }
+
+    function clearCart() {
+        cart.clear();
+        renderCart();
+    }
+
+    function renderCart() {
+        let subtotal = 0;
+        const rows = [];
+        cart.forEach((qty, id) => {
+            const dish = menu.find(d => d.id === id);
+            subtotal += dish.price * qty;
+            rows.push(`<li>${qty} x ${dish.name} = Rs ${dish.price * qty}</li>`);
+        });
+        document.getElementById('cart').innerHTML = rows.length ? rows.join('') : '<li>Cart is empty</li>';
+        document.getElementById('subtotal').textContent = subtotal;
+    }
+
+    async function placeOrder() {
+        const msg = document.getElementById('orderMsg');
+        try {
+            const items = [...cart].map(([itemId, quantity]) => ({itemId, quantity}));
+            const r = await call('/api/orders', 'POST', {
+                memberId: Number(document.getElementById('member').value),
+                offer: document.getElementById('offer').value,
+                items
+            });
+            msg.className = 'msg ok';
+            msg.textContent = `Token #${r.token} booked for ${r.member}\nPaid Rs ${r.total} (saved Rs ${r.discount})`;
+            clearCart();
+            refresh();
+        } catch (e) {
+            msg.className = 'msg err';
+            msg.textContent = e.message;
+        }
+    }
+
+    async function serveNext() {
+        try {
+            const r = await call('/api/kitchen/serve', 'POST');
+            alert(`Token #${r.token} (${r.member}) is ready!`);
+        } catch (e) {
+            alert(e.message);
+        }
+        loadQueue();
+    }
+
+    async function rush() {
+        const dish = encodeURIComponent(document.getElementById('rushDish').value);
+        const plates = document.getElementById('rushPlates').value;
+        try {
+            const r = await call(`/api/kitchen/rush?dish=${dish}&plates=${plates}`, 'POST');
+            document.getElementById('rushOut').textContent =
+                `Served: ${r.served.join(', ')}\nMissed: ${r.missed.join(', ') || 'nobody'}\n\n` + r.log.join('\n');
+        } catch (e) {
+            document.getElementById('rushOut').textContent = e.message;
+        }
+    }
+
+    async function sendFeedback() {
+        const out = document.getElementById('fbMsg');
+        try {
+            const s = await call('/api/feedback', 'POST', {text: document.getElementById('feedback').value});
+            out.className = 'msg ok';
+            out.textContent = `Words ${s.words} | Vowels ${s.vowels} | Consonants ${s.consonants} | Digits ${s.digits} | Special ${s.specialChars}\nMood: ${s.mood}`;
+        } catch (e) {
+            out.className = 'msg err';
+            out.textContent = e.message;
+        }
+    }
+
+    async function show(url, method = 'GET') {
+        const out = document.getElementById('report');
+        try {
+            out.textContent = JSON.stringify(await call(url, method), null, 2);
+        } catch (e) {
+            out.textContent = 'Error: ' + e.message;
+        }
+    }
+
+    async function showText(url) {
+        const out = document.getElementById('report');
+        try {
+            out.textContent = await call(url);
+        } catch (e) {
+            out.textContent = 'Error: ' + e.message;
+        }
+    }
+
+    function refresh() {
+        loadMenu();
+        loadMembers();
+        loadQueue();
+        loadNotices();
+    }
+
+    loadOffers();
+    refresh();
+    setInterval(() => { loadQueue(); loadNotices(); }, 5000);
+</script>
+</body>
+</html>
